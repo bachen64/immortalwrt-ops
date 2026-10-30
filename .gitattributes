@@ -1,0 +1,3 @@
+# Force LF for shell scripts (CRLF breaks them on router busybox sh)
+*.sh text eol=lf
+*.md text eol=lf
