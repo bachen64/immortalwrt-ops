@@ -68,6 +68,7 @@ nslookup kcn01.dynv6.net 8.8.8.8                        # endpoint resolution (D
 | SSH unreachable right after fw3→fw4 switch | fw4 defaults to wan input REJECT; the bare-metal era was ACCEPT | **add an Allow-SSH rule BEFORE switching** (src wan / proto tcp / dest_port 22 / target ACCEPT); or reach it via the wg/lan zone |
 | `firewall restart` hangs >60s | `flowoffload='1'` but the kernel has **no nf_flow_table_ipv4 module** | check `ls /sys/module \| grep flow` first; keep `flowoffload='0'` on module-less devices (don't copy Buero's flow_offloading=1 blindly) |
 | busybox lacks base64/od/timeout (stripped builds like JM1) | stripped busybox applets | deploy scripts via ssh stdin `cat > file` (no base64 hop) + `sed -i 's/\r$//'` for CRLF; use SSH-side timeouts instead of device-side `timeout` |
+| `logread` cron.err floods every minute with `USER root pid X cmd ...` (e.g. pbr.user.chnroute) | busybox crond logs **every cron job execution** to syslog cron.err; this line is **not filtered by cronloglevel** (measured: `-l 7` and `-l 8` both log; busybox semantics 0=most verbose, 8=default least — raising the level does nothing) | append `-L /tmp/crond.log` to the `procd_set_param command` line in `/etc/init.d/cron` (logs go to a file, logread stays clean; the file lives in /tmp and is cleared on reboot), then `/etc/init.d/cron restart`. Verify: no new `logread \| grep cron` lines + `/tmp/crond.log` has content. Applied to Buero/JM1 on 2026-10-30 |
 
 ## Universal recovery
 
