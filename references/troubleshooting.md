@@ -69,6 +69,7 @@ nslookup kcn01.dynv6.net 8.8.8.8                        # endpoint 解析（DDNS
 | firewall restart 挂起 >60s | `flowoffload='1'` 但内核**无 nf_flow_table_ipv4 模块** | 先 `ls /sys/module \| grep flow` 确认；无模块设备保持 `flowoffload='0'`（勿照抄 Buero 的 flow_offloading=1） |
 | busybox 无 base64/od/timeout（精简版如 JM1） | 精简 busybox applet | 脚本部署用 ssh stdin 直传 `cat > 文件`（勿用 base64 中转）+ `sed -i 's/\r$//'` 去 CRLF；远程命令用 SSH 侧超时保护代替设备端 timeout |
 | `logread` 的 cron.err 每分钟刷 `USER root pid X cmd ...`（如 pbr.user.chnroute） | busybox crond 把**每次任务执行**记入 syslog cron.err，该记录**不受 cronloglevel 过滤**（`-l 7`/`-l 8` 实测都记录；busybox 语义 0=最详细、8=默认最简，调档无效） | 改 `/etc/init.d/cron` 的 `procd_set_param command` 行尾加 `-L /tmp/crond.log`（日志转文件，logread 干净；文件在 /tmp 重启自清），再 `/etc/init.d/cron restart`。验证：`logread \| grep cron` 无新增 + `/tmp/crond.log` 有内容。Buero/JM1 已按此法收敛（2026-10-30） |
+| `ssh-keyscan` 对 dropbear 设备报 `choose_kex: unsupported KEX method sntrup761x25519-sha512@openssh.com` 且拿不到 host key | Windows/新版 OpenSSH 的 keyscan 优先 post-quantum KEX（sntrup761），dropbear 不支持且 keyscan **不降级协商**（普通 ssh 客户端会完整协商所以连接正常） | 登录设备用 `dropbearkey -y -f /etc/dropbear/dropbear_<ed25519\|rsa\|ecdsa>_host_key` 导出公钥（dropbear 不自动生成 .pub），按 `<host> <type> <key>` 写入 known_hosts；OpenSSH 类服务器（如 56.1/56.252/13.2）用 `ssh-keyscan -t ed25519,rsa,ecdsa` 正常。验证 `ssh-keygen -F <host>` 逐条比对 |
 
 ## 万能恢复手段
 
