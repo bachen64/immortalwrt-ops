@@ -56,6 +56,8 @@ nslookup kcn01.dynv6.net 8.8.8.8                        # endpoint resolution (D
 
 | Symptom | Root cause | Fix |
 |---|---|---|
+| Peer subnet still unreachable after allowed_ips updated | `wg set` only changes the runtime allowed_ips — it does **not** make netifd rebuild peer routes (route_allowed_ips routes are created on interface reconfig only) | after changing UCI, run `ifup wg0` (or `/etc/init.d/network restart`); verify `ip route \| grep <subnet>` shows `dev wg0` |
+| fw4 reports `Section @nat[x] specifies unknown option 'dest'` | fw4 nat rules have **no `dest` field** (dest belongs to zone forwarding); re-saving firewall via LuCI often drops the nat rule | nat rule needs only `src` + `target 'MASQUERADE'`; verify live: `nft list ruleset \| grep -i masquerade` shows the rule with a non-zero counter |
 | dnsmasq fails to start | `addnmount` is a **list-only** option; writing it as an option crashes it (uci show can't distinguish single-element list from option) | `uci add_list` or write `list addnmount` directly in the file |
 | Chinese garbles in device scripts | router shell has no UTF-8 environment (busybox sh) | device-side scripts: English-only comments |
 | Long compound SSH command hangs | interactive-shell limitation on some side routers | split into simple commands, run one by one |

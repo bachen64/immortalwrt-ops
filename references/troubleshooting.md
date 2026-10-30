@@ -56,6 +56,8 @@ nslookup kcn01.dynv6.net 8.8.8.8                        # endpoint 解析（DDNS
 
 | 症状 | 根因 | 解法 |
 |---|---|---|
+| allowed_ips 已补但对端网段仍不通 | `wg set` 只改运行时 allowed_ips，**不触发 netifd 重建对端路由**（route_allowed_ips 的路由只在接口重配时生成） | 改完 UCI 后必须 `ifup wg0`（或 `/etc/init.d/network restart`），验证 `ip route \| grep <网段>` 出现 dev wg0 |
+| fw4 报 `Section @nat[x] specifies unknown option 'dest'` | fw4 的 nat 规则**没有 dest 字段**（dest 是 zone forwarding 的概念）；LuCI 重配 firewall 时容易把 nat 规则丢掉 | nat 规则只需 `src` + `target 'MASQUERADE'`；确认生效：`nft list ruleset \| grep -i masquerade` 有对应 comment 且有 counter 命中 |
 | dnsmasq 启动失败 | `addnmount` 是 **list-only** 选项，写成 option 会崩；且 uci show 无法区分单元素 list 与 option | 用 `uci add_list` 或直接改文件写 `list addnmount` |
 | HTTPS 下载失败 | 装了 `wget-nossl`（包名即无 SSL 支持） | 用内置 `uclient-fetch`（脚本默认）或装带 SSL 的 wget/curl |
 | 脚本里中文乱码 | 路由器终端编码（busybox sh 无 UTF-8 环境） | 设备端脚本一律纯英文注释 |
