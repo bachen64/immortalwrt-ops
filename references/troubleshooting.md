@@ -43,6 +43,8 @@ nslookup kcn01.dynv6.net 8.8.8.8                        # endpoint 解析（DDNS
 | `uplink_interface` 配了 list 不生效 | uplink_interface 是字符串不是 list | `uci set`（单值）不是 `add_list` |
 | 国外 IPv6 漏到本地 wan | policy src_addr 只写 IPv4，无 IPv6 兜底 | 本方案 ipv6_enabled=0，IPv6 全走 wg0 默认路由（含回退） |
 | 与 OpenClash/mwan3 冲突 | mwan3 启动自动接管 ip rule；OpenClash TUN 抢标记 | 不共存 mwan3；pbr 用高位 fw_mask（00ff0000）隔离 |
+| pbr 启动报 `Default fw4 chain 'mangle_forward' is missing!` | 设备防火墙是 **fw3/iptables 架构**（非 fw4）——pbr 1.2.2 强依赖 fw4 的 nftables mangle 链；**同版本固件的两台设备也可能一个 fw3 一个 fw4**（Buero=fw4、JM1=fw3 实测） | 先切 fw4：切前加 Allow-SSH 保命规则 → `apk del firewall && apk add firewall4` → `/etc/init.d/firewall restart`（可能 >60s，SSH 侧超时保护）→ 验证 `nft list tables` 出现 `inet fw4`。详见"其他"表 |
+| 验证分流方向用不带 mark 的 `ip route get`，国内目标也显示走 wg0 | 不带 fwmark 的查询只走普通规则（默认全隧道 = 预期行为），无法反映 mangle 打标后的剥离 | 验证国内剥离用 `ip route get 114.114.114.114 mark 0x10000`（应走 pbr_wan 表/dev wan）；国外用 `ip route get 8.8.8.8`（不打标 → wg0） |
 
 ### IPv6
 
@@ -62,6 +64,10 @@ nslookup kcn01.dynv6.net 8.8.8.8                        # endpoint 解析（DDNS
 | HTTPS 下载失败 | 装了 `wget-nossl`（包名即无 SSL 支持） | 用内置 `uclient-fetch`（脚本默认）或装带 SSL 的 wget/curl |
 | 脚本里中文乱码 | 路由器终端编码（busybox sh 无 UTF-8 环境） | 设备端脚本一律纯英文注释 |
 | SSH 长复合命令卡住 | 个别旁路由设备交互环境限制 | 拆成简单命令逐条执行 |
+| 防火墙服务"active with no instances"且 iptables/nft 全空（**裸奔**） | 装了 fw3 包但 **fw3 二进制缺失**（`/usr/sbin/fw3: No such file or directory`），服务从未加载规则 | 识别：`nft list tables` 无 `inet fw4`/`ip` 系列表 + `iptables -t nat -L` 空；网络"稳定"仅靠 wg 隧道自持。切 fw4 根治（见 PBR 表对应行） |
+| 切 fw3→fw4 后 SSH 连不上 | fw4 默认 wan input REJECT，而裸奔时代是 ACCEPT | **切换前先加 Allow-SSH 规则**（src wan / proto tcp / dest_port 22 / target ACCEPT）；或从 wg/lan zone 进 |
+| firewall restart 挂起 >60s | `flowoffload='1'` 但内核**无 nf_flow_table_ipv4 模块** | 先 `ls /sys/module \| grep flow` 确认；无模块设备保持 `flowoffload='0'`（勿照抄 Buero 的 flow_offloading=1） |
+| busybox 无 base64/od/timeout（精简版如 JM1） | 精简 busybox applet | 脚本部署用 ssh stdin 直传 `cat > 文件`（勿用 base64 中转）+ `sed -i 's/\r$//'` 去 CRLF；远程命令用 SSH 侧超时保护代替设备端 timeout |
 
 ## 万能恢复手段
 

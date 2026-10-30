@@ -43,6 +43,8 @@ nslookup kcn01.dynv6.net 8.8.8.8                        # endpoint resolution (D
 | `uplink_interface` as a list has no effect | uplink_interface is a string, not a list | `uci set` (single value), not `add_list` |
 | Global IPv6 leaks to local wan | policy `src_addr` lists IPv4 only, no IPv6 fallback | keep `ipv6_enabled=0`: all IPv6 rides the wg0 default route (fallback included) |
 | Conflicts with OpenClash / mwan3 | mwan3 grabs `ip rule` on start; OpenClash TUN fights over marks | do not co-install mwan3; pbr uses high fw_mask (`00ff0000`) to stay isolated |
+| pbr fails to start: `Default fw4 chain 'mangle_forward' is missing!` | device firewall is **fw3/iptables**, not fw4 — pbr 1.2.2 hard-requires fw4's nftables mangle chains; **two devices on the same firmware version can differ** (measured: Buero=fw4, JM1=fw3) | switch to fw4 first: add an Allow-SSH lifeline rule → `apk del firewall && apk add firewall4` → `/etc/init.d/firewall restart` (may exceed 60s; protect with an SSH-side timeout) → verify `nft list tables` shows `inet fw4`. See "Other" table |
+| `ip route get` without a mark shows CN targets going via wg0 | unmarked lookups follow the plain rules only (full-tunnel default IS the expected behavior); they can't reflect the mangle marking | verify the CN bypass with `ip route get 114.114.114.114 mark 0x10000` (must hit table pbr_wan / dev wan); foreign with `ip route get 8.8.8.8` (unmarked → wg0) |
 
 ### IPv6
 
@@ -62,6 +64,10 @@ nslookup kcn01.dynv6.net 8.8.8.8                        # endpoint resolution (D
 | Chinese garbles in device scripts | router shell has no UTF-8 environment (busybox sh) | device-side scripts: English-only comments |
 | Long compound SSH command hangs | interactive-shell limitation on some side routers | split into simple commands, run one by one |
 | HTTPS download fails | installed `wget-nossl` (the name literally means no SSL) | use built-in `uclient-fetch` (script default) or install an SSL-capable wget/curl |
+| Firewall service "active with no instances" and iptables/nft are all empty (**bare-metal/no rules**) | fw3 package installed but the **fw3 binary is missing** (`/usr/sbin/fw3: No such file or directory`), rules never loaded | fingerprint: `nft list tables` has neither `inet fw4` nor `ip` tables + `iptables -t nat -L` empty; network "stability" rides solely on the wg tunnel. Root fix: switch to fw4 (see PBR table row) |
+| SSH unreachable right after fw3→fw4 switch | fw4 defaults to wan input REJECT; the bare-metal era was ACCEPT | **add an Allow-SSH rule BEFORE switching** (src wan / proto tcp / dest_port 22 / target ACCEPT); or reach it via the wg/lan zone |
+| `firewall restart` hangs >60s | `flowoffload='1'` but the kernel has **no nf_flow_table_ipv4 module** | check `ls /sys/module \| grep flow` first; keep `flowoffload='0'` on module-less devices (don't copy Buero's flow_offloading=1 blindly) |
+| busybox lacks base64/od/timeout (stripped builds like JM1) | stripped busybox applets | deploy scripts via ssh stdin `cat > file` (no base64 hop) + `sed -i 's/\r$//'` for CRLF; use SSH-side timeouts instead of device-side `timeout` |
 
 ## Universal recovery
 
