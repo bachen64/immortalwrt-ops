@@ -27,8 +27,9 @@ nslookup kcn01.dynv6.net 8.8.8.8                        # endpoint resolution (D
 | Symptom | Root cause | Fix |
 |---|---|---|
 | endpoint = `198.18.0.x`, handshake frozen | OpenClash fake-ip mapped the WG endpoint domain to a fake-ip | **Reboot first** (right after boot OpenClash has not hijacked DNS yet, WG handshakes against the real address); **do NOT** ifdown/ifup wg0 (handshake resets to zero, worse) |
-| Peer unreachable, "Required key not available" | peer `allowed_ips` lacks the target subnet (WireGuard filters the data plane by allowed_ips) | `wg set wg0 peer <pub> allowed-ips <ip> <net>` |
-| Disconnects every night at the same time | leftover IPv6/RA config on the device (e.g. an iStoreAPP plugin was installed for IPv6 testing then removed without restoring config) | diff `/etc/config/dhcp` and `network` against a backup, revert leftovers |
+| Peer unreachable, "Required key not available" | peer `allowed_ips` lacks the target subnet (WireGuard filters the data plane by allowed_ips) | `wg set wg0 peer <pub> allowed-ips <ip> <net>`; to persist via UCI note `config wireguard_<if>` is an **anonymous section** — use `uci add_list network.@wireguard_<if>[0].allowed_ips=...` (by-name `network.wireguard_wg0` yields Entry not found / Invalid argument) |
+| Disconnects every night (~04:00) | OpenClash daily auto-restart DNS window + endpoint domain resolved to a fake-ip (measured on Home: `kcn01.dynv6.net` → `198.18.0.34`, real is 240e:...) | **Root fix**: whitelist the endpoint domain in `/etc/openclash/custom/openclash_custom_fake_filter.list` (with `custom_fakeip_filter_mode 'blacklist'` = real resolution), restart OpenClash; `nslookup <domain> 127.0.0.1` must return the real IP. ⚠️ File may lack a trailing newline — `echo >>` glues onto the last comment line; `tail` first, append with `printf '\n<domain>\n'` |
+| Disconnects every night at the same time (leftover-IPv6 scenario) | leftover IPv6/RA config on the device (e.g. an iStoreAPP plugin was installed for IPv6 testing then removed without restoring config) | diff `/etc/config/dhcp` and `network` against a backup, revert leftovers |
 | No handshake after reboot | OpenClash startup order/cache; endpoint is a DDNS name with wrong resolution | check logread timing; `nslookup` the name manually, temporarily pin the IP endpoint |
 
 ### PBR routing anomalies

@@ -27,8 +27,9 @@ nslookup kcn01.dynv6.net 8.8.8.8                        # endpoint 解析（DDNS
 | 症状 | 根因 | 解法 |
 |---|---|---|
 | endpoint = `198.18.0.x` 且握手不动 | OpenClash fake-ip 把 WG endpoint 域名解析成 fake-ip | **优先 reboot**（重启早期 OpenClash 未接管 DNS，WG 直连真实地址可握手）；**不要** ifdown/ifup wg0（握手归零更难恢复） |
-| 对端 ping 不通，报 "Required key not available" | peer `allowed_ips` 缺目标网段（WireGuard 按 allowed_ips 过滤数据面） | `wg set wg0 peer <pub> allowed-ips <ip> <net>` 补网段 |
-| 每晚固定掉线 | 设备上残留的 IPv6/RA 配置改动（如装过 iStoreAPP 插件后删除未还原） | 对比备份 diff `/etc/config/dhcp`、`network`，还原残留项 |
+| 每晚固定掉线（周期 04:00 附近） | OpenClash 每日 auto-restart 的 DNS 波动 + endpoint 域名被 fake-ip 解析（Home 实测：`kcn01.dynv6.net` → `198.18.0.34`，真实是 240e:...） | **根治**：把 endpoint 域名加进 fake-ip 白名单 `/etc/openclash/custom/openclash_custom_fake_filter.list`（`custom_fakeip_filter_mode 'blacklist'` 下=真实解析），重启 OpenClash；`nslookup <域名> 127.0.0.1` 应返回真实 IP。⚠️ 文件末行可能无换行，`echo >>` 会拼进注释行——先 `tail` 检查，用 `printf '\n<域名>\n'` 独立成行 |
+| 对端 ping 不通，报 "Required key not available" | peer `allowed_ips` 缺目标网段（WireGuard 按 allowed_ips 过滤数据面） | `wg set wg0 peer <pub> allowed-ips <ip> <net>` 补网段；UCI 持久化注意：`config wireguard_<if>` 是**匿名 section**，须用 `uci add_list network.@wireguard_<if>[0].allowed_ips=...`（按名字 `network.wireguard_wg0` 会报 Entry not found / Invalid argument） |
+| 每晚固定掉线（IPv6 残留场景） | 设备上残留的 IPv6/RA 配置改动（如装过 iStoreAPP 插件后删除未还原） | 对比备份 diff `/etc/config/dhcp`、`network`，还原残留项 |
 | 重启后不握手 | OpenClash 启动顺序/缓存；endpoint 用动态域名且 DNS 解析错误 | logread 查时序；试 `nslookup` 手动解析后临时换 IP endpoint |
 
 ### PBR 分流异常
