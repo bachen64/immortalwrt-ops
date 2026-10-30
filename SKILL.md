@@ -78,6 +78,8 @@ sysupgrade -r /tmp/backup-XXX.tar.gz               # 恢复
 | `scripts/pbr.user.chnroute` | 设备端 chnroute 灌入脚本（英文注释，支持 --force） | 部署到设备 `/usr/share/pbr/` |
 | `scripts/check-route.sh` | 设备端分流健康检查（read-only） | 日常巡检 / 验证 |
 
+> English versions of all references (for non-Chinese readers): `references/pbr-chnroute-en.md`, `references/failover-architecture-en.md`, `references/troubleshooting-en.md`.
+
 ## 铁律
 
 - 改动前备份；read-only 能诊断就不先改。
