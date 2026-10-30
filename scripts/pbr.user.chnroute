@@ -1,0 +1,62 @@
+#!/bin/sh
+# chnroute auto-import script for OpenWrt/ImmortalWrt official pbr package
+# Target device: the router running pbr (deploy to /usr/share/pbr/pbr.user.chnroute)
+# Usage:
+#   ./pbr.user.chnroute           # default: exit silently if set is not empty
+#   ./pbr.user.chnroute --force   # force: flush set and re-import chnroute
+#
+# Requirements: jq (opkg/apk install jq), uclient-fetch (built-in)
+
+TARGET_URL="https://ispip.clang.cn/all_cn.txt"
+TARGET_TABLE='inet fw4'
+
+# Parse arguments
+FORCE_MODE=0
+if [ "$1" = "--force" ]; then
+    FORCE_MODE=1
+fi
+
+# Get NFT set name (pbr_wan_4_dst_ip_*)
+NFT_SET=$(nft -j list sets "$TARGET_TABLE" | jq -r '.nftables[].set.name' | grep '^pbr_wan_4_dst_ip_')
+
+# Exit if set not found
+if [ -z "$NFT_SET" ]; then
+    logger -t pbr "[Error] NFT set not found"
+    exit 1
+fi
+
+# Get element count
+ELEM_COUNT=$(nft -j list set "$TARGET_TABLE" "$NFT_SET" 2>/dev/null | jq 'try (.nftables[] | select(.set) | .set.elem | length) // 0')
+
+if [ -z "$ELEM_COUNT" ]; then
+    logger -t pbr "[Error] NFT set exists but jq parse failed"
+    exit 1
+fi
+
+# Default mode: exit silently if set is not empty
+if [ "$FORCE_MODE" -eq 0 ] && [ "$ELEM_COUNT" -gt 0 ]; then
+    exit 0
+fi
+
+# Force mode or set is empty: proceed with import
+if [ "$FORCE_MODE" -eq 1 ]; then
+    logger -t pbr "[Info] Force mode: flushing $NFT_SET and re-importing chnroute"
+else
+    logger -t pbr "[Info] NFT set $NFT_SET is empty, importing chnroute"
+fi
+
+# Download -> filter -> generate batch -> atomic import
+uclient-fetch --no-check-certificate -qO- "$TARGET_URL" 2>/dev/null | \
+    grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+/[0-9]+' | \
+    awk -v t="$TARGET_TABLE" -v s="$NFT_SET" 'BEGIN{print "flush set "t" "s} {print "add element "t" "s" { "$1" }"}' | \
+    nft -f - 
+
+# Check result
+if [ $? -eq 0 ]; then
+    NEW_COUNT=$(nft -j list set "$TARGET_TABLE" "$NFT_SET" 2>/dev/null | jq 'try (.nftables[] | select(.set) | .set.elem | length) // 0')
+    logger -t pbr "[Success] Updated NFT set $NFT_SET, now has $NEW_COUNT elements"
+    exit 0
+else
+    logger -t pbr "[Error] Import failed for NFT set $NFT_SET"
+    exit 1
+fi
