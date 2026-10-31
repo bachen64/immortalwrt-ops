@@ -77,6 +77,7 @@ sysupgrade -r /tmp/backup-XXX.tar.gz               # 恢复
 | `references/troubleshooting.md` | 排障命令速查 + 已知坑清单 | 任何排障场景 |
 | `scripts/pbr.user.chnroute` | 设备端 chnroute 灌入脚本（英文注释，支持 --force） | 部署到设备 `/usr/share/pbr/` |
 | `scripts/check-route.sh` | 设备端分流健康检查（read-only） | 日常巡检 / 验证 |
+| `scripts/wg0-iface-manager.sh` | 设备端 wg0 DDNS 自愈脚本（对端 Office IP 变化自动 down/up wg0 重解析；英文注释版 v2.4） | 部署到 `/usr/bin/wg0-iface-manager.sh` + cron `*/5 * * * *` |
 
 > English versions of all references (for non-Chinese readers): `references/pbr-chnroute-en.md`, `references/failover-architecture-en.md`, `references/troubleshooting-en.md`.
 
