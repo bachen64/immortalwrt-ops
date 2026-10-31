@@ -31,6 +31,7 @@ nslookup kcn01.dynv6.net 8.8.8.8                        # endpoint 解析（DDNS
 | 对端 ping 不通，报 "Required key not available" | peer `allowed_ips` 缺目标网段（WireGuard 按 allowed_ips 过滤数据面） | `wg set wg0 peer <pub> allowed-ips <ip> <net>` 补网段；UCI 持久化注意：`config wireguard_<if>` 是**匿名 section**，须用 `uci add_list network.@wireguard_<if>[0].allowed_ips=...`（按名字 `network.wireguard_wg0` 会报 Entry not found / Invalid argument） |
 | 每晚固定掉线（IPv6 残留场景） | 设备上残留的 IPv6/RA 配置改动（如装过 iStoreAPP 插件后删除未还原） | 对比备份 diff `/etc/config/dhcp`、`network`，还原残留项 |
 | 重启后不握手 | OpenClash 启动顺序/缓存；endpoint 用动态域名且 DNS 解析错误 | logread 查时序；试 `nslookup` 手动解析后临时换 IP endpoint |
+| 对端（hub）PPPoE 重拨换 IPv6 前缀后，spoke 握手停在重拨时刻不恢复 | **换 PBR 时误删了 wg0-iface-manager cron job**（每 5 分钟检测对端 DDNS 变化，变了就 down/up wg0 重解析；WireGuard endpoint 域名只在接口启动时解析一次，接口不重启永远连旧地址） | 从备份恢复 `/usr/bin/wg0-iface-manager.sh` + cron `*/5 * * * *`（脚本见 `scripts/wg0-iface-manager.sh`，OneDrive `Attachments\backup\{Buero,JM1}` 有原版）；立即 `ifup wg0` 恢复当前断线 |
 
 ### PBR 分流异常
 
