@@ -1,10 +1,14 @@
 #!/bin/sh
 # ============================================================================
-# wg0 interface manager v2.5 (POSIX-compatible)
+# wg0 interface manager v2.6 (POSIX-compatible)
 # Run every 5 min: detect DDNS change of wg0 peer, manage WG interface
 # If wg0 connects to a local address, try to fix it
 # v2.5: cron runs are silent; only events (IP change, restart, warnings,
 #        errors) are logged. Use --check for full verbose diagnostics.
+# v2.6: fix DNS parsing that picked dnsmasq's own 127.0.0.1:53 server line as
+#        the answer when the real query failed -> false "IP changed" loops.
+#        Now only the Address line after "Name:" is accepted; local/bogus
+#        results are treated as resolve failure and skip the run.
 # ============================================================================
 
 # ============================================================================
@@ -164,16 +168,24 @@ trap cleanup EXIT INT TERM
 check_dns_resolution() {
     domain="$1"
     ip_type="$2"
-    
+
     log_debug "Check DNS: domain=$domain, type=$ip_type"
-    
-    result=""
-    if [ "$ip_type" = "AAAA" ]; then
-        result=$(nslookup -type=AAAA "$domain" 2>/dev/null | grep "Address" | tail -1 | awk '{print $2}')
-    else
-        result=$(nslookup -type=A "$domain" 2>/dev/null | grep "Address" | tail -1 | awk '{print $2}')
+
+    # Extract the address on the line right AFTER "Name:".
+    # Busybox nslookup prints a server block "Address 1: 127.0.0.1:53" BEFORE
+    # "Name:"; a naive grep|tail picked that up as a bogus answer when the real
+    # query failed (JM1 2026-11-03 false "IP changed" incident). Column position
+    # is unreliable ("Address:" vs "Address 1:"), so strip the whole label.
+    result=$(nslookup -type="$ip_type" "$domain" 2>/dev/null \
+        | sed -n '/^Name:/{n;s/^[^:]*:[[:space:]]*//;p}')
+
+    # Reject local/bogus answers outright (defense in depth)
+    if [ -n "$result" ] && is_local_address "$result"; then
+        log_warning "DNS answer looks local ($domain -> $result), treat as failure"
+        echo ""
+        return 1
     fi
-    
+
     if [ -n "$result" ]; then
         log_debug "DNS resolved: $domain -> $result"
         echo "$result"
@@ -451,6 +463,12 @@ monitor_ddns() {
         log_error "Peer DDNS resolve failed, skip this run"
         return 1
     fi
+
+    # Defense in depth: never act on a local/bogus peer IP
+    if is_local_address "$domain_ip"; then
+        log_warning "Resolved peer DDNS looks local ($domain_ip), skip this run"
+        return 1
+    fi
     
     current_ip=$(get_current_peer_ip)
     last_ip=$(read_last_ip)
@@ -601,7 +619,7 @@ EOF
 }
 
 show_version() {
-    echo "wg0 interface manager v2.5 (POSIX-compatible)"
+    echo "wg0 interface manager v2.6 (POSIX-compatible)"
 }
 
 # ============================================================================
