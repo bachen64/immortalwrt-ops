@@ -1,8 +1,10 @@
 #!/bin/sh
 # ============================================================================
-# wg0 接口管理器 v2.4 (POSIX兼容版)
+# wg0 接口管理器 v2.5 (POSIX兼容版)
 # 每5分钟检测wg0对端DDNS的变化，动态管理WG接口
 # 当检测到wg0连接到本地地址，尝试修复
+# v2.5: cron巡检静默运行，仅在事件发生时记录日志（IP变化/重启/警告/错误）；
+#        使用 --check 可查看完整诊断输出。
 # ============================================================================
 
 # ============================================================================
@@ -32,6 +34,10 @@ NETWORK_STABILIZE_DELAY=5
 # 日志级别控制
 LOG_LEVEL="INFO"
 DEBUG_MODE=0
+# SILENT=1: 正常巡检噪声被抑制（cron MONITOR 运行时）；
+#           事件日志（IP变化/重启/警告/错误）始终记录。
+# SILENT=0: 输出完整诊断信息（手动 --check 运行时）。
+SILENT=0
 
 # ============================================================================
 # 日志系统 - POSIX兼容版
@@ -99,6 +105,14 @@ log_status() {
     esac
     
     log_info "$emoji $message"
+}
+
+# 巡检噪声日志：仅在 SILENT=0（手动诊断）时输出。
+# 事件日志（IP变化/重启/警告/错误）禁止使用此函数。
+log_verbose() {
+    if [ "$SILENT" -eq 0 ]; then
+        log_info "$1"
+    fi
 }
 
 # ============================================================================
@@ -430,7 +444,7 @@ handle_ip_change() {
 }
 
 monitor_ddns() {
-    log_status "INFO" "开始$WG_INTERFACE对端DDNS监控检查"
+    log_verbose "开始$WG_INTERFACE对端DDNS监控检查"
     
     domain_ip=$(resolve_domain_ip "$DDNS_DOMAIN")
     if [ -z "$domain_ip" ]; then
@@ -454,7 +468,7 @@ monitor_ddns() {
         last_display="$last_ip"
     fi
     
-    log_info "DDNS检查: 当前解析IP=$domain_ip, 当前连接IP=$current_display, 上次记录IP=$last_display"
+    log_verbose "DDNS检查: 当前解析IP=$domain_ip, 当前连接IP=$current_display, 上次记录IP=$last_display"
     
     connection_state=$(check_wg_connection)
     if [ "$connection_state" = "LOCAL_CONNECTION" ]; then
@@ -478,7 +492,7 @@ monitor_ddns() {
 # 优化的健康检查功能
 # ============================================================================
 perform_health_check() {
-    log_status "INFO" "执行$WG_INTERFACE健康检查"
+    log_verbose "执行$WG_INTERFACE健康检查"
     
     # 1. 检查$WG_INTERFACE对端连接状态
     connection_state=$(check_wg_connection)
@@ -510,22 +524,22 @@ perform_health_check() {
         transfer_info=$(echo "$wg_output" | grep "^[[:space:]]*transfer:" | head -1 | sed 's/^[[:space:]]*transfer:[[:space:]]*//')
     fi
     
-    # 输出优化的健康检查报告
-    log_info "健康检查报告:"
-    log_info "  - $WG_INTERFACE对端连接: $connection_state"
-    log_info "  - $WG_INTERFACE接口健康状态: $interface_health"
-    log_info "  - $WG_INTERFACE对端DNS解析: $dns_status"
-    
+    # 输出优化的健康检查报告（仅详细模式；cron巡检时抑制）
+    log_verbose "健康检查报告:"
+    log_verbose "  - $WG_INTERFACE对端连接: $connection_state"
+    log_verbose "  - $WG_INTERFACE接口健康状态: $interface_health"
+    log_verbose "  - $WG_INTERFACE对端DNS解析: $dns_status"
+
     if [ -n "$endpoint_info" ]; then
-        log_info "  - 端点: $endpoint_info"
+        log_verbose "  - 端点: $endpoint_info"
     fi
-    
+
     if [ -n "$handshake_info" ]; then
-        log_info "  - 最后握手: $handshake_info"
+        log_verbose "  - 最后握手: $handshake_info"
     fi
-    
+
     if [ -n "$transfer_info" ]; then
-        log_info "  - 传输统计: $transfer_info"
+        log_verbose "  - 传输统计: $transfer_info"
     fi
     
     # 根据连接状态决定健康检查结果
@@ -534,7 +548,7 @@ perform_health_check() {
             # 即使连接到对端，也要检查接口基本健康
             case "$interface_health" in
                 HEALTHY)
-                    log_status "SUCCESS" "健康检查通过: $WG_INTERFACE完全正常"
+                    log_verbose "健康检查通过: $WG_INTERFACE完全正常"
                     return 0
                     ;;
                 NO_IP_ADDRESS)
@@ -587,7 +601,7 @@ EOF
 }
 
 show_version() {
-    echo "wg0 接口管理器 v2.4 (POSIX兼容版)"
+    echo "wg0 接口管理器 v2.5 (POSIX兼容版)"
 }
 
 # ============================================================================
@@ -631,7 +645,12 @@ main() {
         esac
     done
     
-    log_info "脚本启动，模式: $mode"
+    # cron (MONITOR) 运行默认静默，除非显式指定 --debug
+    if [ "$mode" = "MONITOR" ] && [ "$DEBUG_MODE" -eq 0 ]; then
+        SILENT=1
+    fi
+
+    log_verbose "脚本启动，模式: $mode"
     log_debug "运行参数: LOG_LEVEL=$LOG_LEVEL, DEBUG_MODE=$DEBUG_MODE"
     
     if ! check_requirements; then
@@ -647,7 +666,7 @@ main() {
             ;;
         MONITOR)
             if monitor_ddns; then
-                log_status "SUCCESS" "DDNS监控完成"
+                log_verbose "DDNS监控完成"
                 # 静默执行健康检查，只记录错误
                 if ! perform_health_check >/dev/null 2>&1; then
                     log_warning "健康检查未通过，但DDNS监控已完成"
