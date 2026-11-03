@@ -1,8 +1,10 @@
 #!/bin/sh
 # ============================================================================
-# wg0 interface manager v2.4 (POSIX-compatible)
+# wg0 interface manager v2.5 (POSIX-compatible)
 # Run every 5 min: detect DDNS change of wg0 peer, manage WG interface
 # If wg0 connects to a local address, try to fix it
+# v2.5: cron runs are silent; only events (IP change, restart, warnings,
+#        errors) are logged. Use --check for full verbose diagnostics.
 # ============================================================================
 
 # ============================================================================
@@ -32,6 +34,10 @@ NETWORK_STABILIZE_DELAY=5
 # Log level control
 LOG_LEVEL="INFO"
 DEBUG_MODE=0
+# SILENT=1: normal polling noise suppressed (cron MONITOR runs).
+#           Events (IP change, restart, warnings, errors) are always logged.
+# SILENT=0: verbose diagnostics (manual --check runs).
+SILENT=0
 
 # ============================================================================
 # Logging system - POSIX-compatible
@@ -99,6 +105,14 @@ log_status() {
     esac
     
     log_info "$emoji $message"
+}
+
+# Verbose polling noise: written only when SILENT=0 (manual diagnostics).
+# Event logs (IP change, restart, warning, error) must NOT use this.
+log_verbose() {
+    if [ "$SILENT" -eq 0 ]; then
+        log_info "$1"
+    fi
 }
 
 # ============================================================================
@@ -430,7 +444,7 @@ handle_ip_change() {
 }
 
 monitor_ddns() {
-    log_status "INFO" "Start DDNS monitor check"
+    log_verbose "Start DDNS monitor check"
     
     domain_ip=$(resolve_domain_ip "$DDNS_DOMAIN")
     if [ -z "$domain_ip" ]; then
@@ -454,7 +468,7 @@ monitor_ddns() {
         last_display="$last_ip"
     fi
     
-    log_info "DDNS check: resolved=$domain_ip, connected=$current_display, last=$last_display"
+    log_verbose "DDNS check: resolved=$domain_ip, connected=$current_display, last=$last_display"
     
     connection_state=$(check_wg_connection)
     if [ "$connection_state" = "LOCAL_CONNECTION" ]; then
@@ -478,7 +492,7 @@ monitor_ddns() {
 # Optimized health check
 # ============================================================================
 perform_health_check() {
-    log_status "INFO" "Run $WG_INTERFACE health check"
+    log_verbose "Run $WG_INTERFACE health check"
     
     # 1. Peer connection state
     connection_state=$(check_wg_connection)
@@ -510,22 +524,22 @@ perform_health_check() {
         transfer_info=$(echo "$wg_output" | grep "^[[:space:]]*transfer:" | head -1 | sed 's/^[[:space:]]*transfer:[[:space:]]*//')
     fi
     
-    # Output health check report
-    log_info "Health check report:"
-    log_info "  - $WG_INTERFACE peer connection: $connection_state"
-    log_info "  - $WG_INTERFACE interface health: $interface_health"
-    log_info "  - $WG_INTERFACE peer DNS resolution: $dns_status"
-    
+    # Output health check report (verbose only; suppressed during cron runs)
+    log_verbose "Health check report:"
+    log_verbose "  - $WG_INTERFACE peer connection: $connection_state"
+    log_verbose "  - $WG_INTERFACE interface health: $interface_health"
+    log_verbose "  - $WG_INTERFACE peer DNS resolution: $dns_status"
+
     if [ -n "$endpoint_info" ]; then
-        log_info "  - endpoint: $endpoint_info"
+        log_verbose "  - endpoint: $endpoint_info"
     fi
-    
+
     if [ -n "$handshake_info" ]; then
-        log_info "  - latest handshake: $handshake_info"
+        log_verbose "  - latest handshake: $handshake_info"
     fi
-    
+
     if [ -n "$transfer_info" ]; then
-        log_info "  - transfer: $transfer_info"
+        log_verbose "  - transfer: $transfer_info"
     fi
     
     # Decide result by connection state
@@ -534,7 +548,7 @@ perform_health_check() {
             # Even if connected, check interface health
             case "$interface_health" in
                 HEALTHY)
-                    log_status "SUCCESS" "health check passed: $WG_INTERFACE fully OK"
+                    log_verbose "health check passed: $WG_INTERFACE fully OK"
                     return 0
                     ;;
                 NO_IP_ADDRESS)
@@ -587,7 +601,7 @@ EOF
 }
 
 show_version() {
-    echo "wg0 interface manager v2.4 (POSIX-compatible)"
+    echo "wg0 interface manager v2.5 (POSIX-compatible)"
 }
 
 # ============================================================================
@@ -631,7 +645,12 @@ main() {
         esac
     done
     
-    log_info "Script started, mode: $mode"
+    # Cron (MONITOR) runs are silent unless --debug was requested
+    if [ "$mode" = "MONITOR" ] && [ "$DEBUG_MODE" -eq 0 ]; then
+        SILENT=1
+    fi
+
+    log_verbose "Script started, mode: $mode"
     log_debug "Runtime params: LOG_LEVEL=$LOG_LEVEL, DEBUG_MODE=$DEBUG_MODE"
     
     if ! check_requirements; then
@@ -647,8 +666,8 @@ main() {
             ;;
         MONITOR)
             if monitor_ddns; then
-                log_status "SUCCESS" "DDNS monitor done"
-                # Run health check silently, log errors only
+                log_verbose "DDNS monitor done"
+                # Health check: log only problems via SILENT=1
                 if ! perform_health_check >/dev/null 2>&1; then
                     log_warning "Health check failed but DDNS monitor done"
                 fi
