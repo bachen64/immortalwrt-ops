@@ -52,6 +52,7 @@ curl -s --connect-timeout 5 ifconfig.me
 1. `wg show wg0` → endpoint 若为 `198.18.0.x`（fake-ip）且握手停滞 → OpenClash fake-ip 问题，**优先 reboot**（重启早期 OpenClash 未接管 DNS，WG 直连真实地址反而能握手）；**不要** ifdown/ifup wg0（握手归零更不通）。
 2. 对端 ping 不通先查 peer `allowed_ips` 是否覆盖目标网段（WireGuard 按 allowed_ips 过滤数据面；缺网段会报 "Required key not available"）。
 3. 本机不在目标子网时，用 hub 节点（如 56.1）做跳板探测，区分"对端离线"与"allowed_ips 缺网段"。
+4. **hub PPPoE 重拨/IPv6 前缀变化后 spoke 集体不恢复**：自愈靠 spoke 上的 `wg0-iface-manager` cron（每 5 分钟检测对端 DDNS 变化并 down/up wg0 重解析）。**换 PBR/重做配置时严禁删除此 cron**——10-31 事故根因就是它被误删、spoke 断 6 小时。详见 `references/troubleshooting.md` "对端重拨换前缀"条目。v2.5 起 cron 巡检静默运行，只写事件日志；手动跑 `/usr/bin/wg0-iface-manager.sh --check` 看完整诊断。
 
 ### 4. IPv6
 
@@ -77,7 +78,7 @@ sysupgrade -r /tmp/backup-XXX.tar.gz               # 恢复
 | `references/troubleshooting.md` | 排障命令速查 + 已知坑清单 | 任何排障场景 |
 | `scripts/pbr.user.chnroute` | 设备端 chnroute 灌入脚本（英文注释，支持 --force） | 部署到设备 `/usr/share/pbr/` |
 | `scripts/check-route.sh` | 设备端分流健康检查（read-only） | 日常巡检 / 验证 |
-| `scripts/wg0-iface-manager.sh` | 设备端 wg0 DDNS 自愈脚本（对端 Office IP 变化自动 down/up wg0 重解析；英文注释版 v2.4） | 部署到 `/usr/bin/wg0-iface-manager.sh` + cron `*/5 * * * *` |
+| `scripts/wg0-iface-manager.sh` | 设备端 wg0 DDNS 自愈脚本（对端 IP 变化自动 down/up wg0 重解析；英文注释 v2.5，cron 巡检静默、仅事件写日志） | 部署到 `/usr/bin/wg0-iface-manager.sh` + cron `*/5 * * * *`，**换 PBR 时勿删** |
 
 > English versions of all references (for non-Chinese readers): `references/pbr-chnroute-en.md`, `references/failover-architecture-en.md`, `references/troubleshooting-en.md`.
 
