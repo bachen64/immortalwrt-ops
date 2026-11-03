@@ -1,10 +1,13 @@
 #!/bin/sh
 # ============================================================================
-# wg0 接口管理器 v2.5 (POSIX兼容版)
+# wg0 接口管理器 v2.6 (POSIX兼容版)
 # 每5分钟检测wg0对端DDNS的变化，动态管理WG接口
 # 当检测到wg0连接到本地地址，尝试修复
 # v2.5: cron巡检静默运行，仅在事件发生时记录日志（IP变化/重启/警告/错误）；
 #        使用 --check 可查看完整诊断输出。
+# v2.6: 修复DNS解析——真实查询失败时曾把dnsmasq自身的127.0.0.1:53 server行
+#        误当答案，导致误判"IP变化"并反复重启wg0（JM1 2026-11-03事故）。
+#        现在只接受"Name:"行之后的地址；本地/可疑答案按解析失败处理并跳过本轮。
 # ============================================================================
 
 # ============================================================================
@@ -164,16 +167,23 @@ trap cleanup EXIT INT TERM
 check_dns_resolution() {
     domain="$1"
     ip_type="$2"
-    
+
     log_debug "检查DNS解析: domain=$domain, type=$ip_type"
-    
-    result=""
-    if [ "$ip_type" = "AAAA" ]; then
-        result=$(nslookup -type=AAAA "$domain" 2>/dev/null | grep "Address" | tail -1 | awk '{print $2}')
-    else
-        result=$(nslookup -type=A "$domain" 2>/dev/null | grep "Address" | tail -1 | awk '{print $2}')
+
+    # 只取 "Name:" 行下一行的地址。
+    # busybox nslookup 在 "Name:" 之前还有一段 server 输出 "Address 1: 127.0.0.1:53"；
+    # 以前 grep|tail 会在真实查询失败时把它误当答案（2026-11-03 JM1 误判"IP变化"事故）。
+    # 列位置不可靠（"Address:" 与 "Address 1:"），因此直接剥掉行首标签。
+    result=$(nslookup -type="$ip_type" "$domain" 2>/dev/null \
+        | sed -n '/^Name:/{n;s/^[^:]*:[[:space:]]*//;p}')
+
+    # 本地/可疑答案直接判为失败（纵深防御）
+    if [ -n "$result" ] && is_local_address "$result"; then
+        log_warning "DNS答案疑似本地地址 ($domain -> $result)，按解析失败处理"
+        echo ""
+        return 1
     fi
-    
+
     if [ -n "$result" ]; then
         log_debug "DNS解析成功: $domain -> $result"
         echo "$result"
@@ -451,6 +461,12 @@ monitor_ddns() {
         log_error "$WG_INTERFACE对端DDNS解析失败，跳过本次检查"
         return 1
     fi
+
+    # 纵深防御：本地/可疑对端IP一律不动作
+    if is_local_address "$domain_ip"; then
+        log_warning "解析到的对端DDNS疑似本地地址 ($domain_ip)，跳过本次检查"
+        return 1
+    fi
     
     current_ip=$(get_current_peer_ip)
     last_ip=$(read_last_ip)
@@ -601,7 +617,7 @@ EOF
 }
 
 show_version() {
-    echo "wg0 接口管理器 v2.5 (POSIX兼容版)"
+    echo "wg0 接口管理器 v2.6 (POSIX兼容版)"
 }
 
 # ============================================================================
