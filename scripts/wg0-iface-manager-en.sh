@@ -1,6 +1,6 @@
 #!/bin/sh
 # ============================================================================
-# wg0 interface manager v2.6 (POSIX-compatible)
+# wg0 interface manager v2.7 (POSIX-compatible)
 # Run every 5 min: detect DDNS change of wg0 peer, manage WG interface
 # If wg0 connects to a local address, try to fix it
 # v2.5: cron runs are silent; only events (IP change, restart, warnings,
@@ -9,6 +9,8 @@
 #        the answer when the real query failed -> false "IP changed" loops.
 #        Now only the Address line after "Name:" is accepted; local/bogus
 #        results are treated as resolve failure and skip the run.
+# v2.7: if peer IP is unchanged but wg0 itself is DISCONNECTED (e.g. endpoint
+#        stuck at 0.0.0.0 after a reboot), force-restart wg0 to recover.
 # ============================================================================
 
 # ============================================================================
@@ -500,7 +502,20 @@ monitor_ddns() {
     elif [ "$domain_ip" != "$last_ip" ]; then
         handle_ip_change "$last_ip" "$domain_ip"
     else
-        log_debug "Peer IP unchanged, nothing to do"
+        # Peer IP unchanged: only act when wg0 itself is down.
+        # Covers the "0.0.0.0 / empty endpoint" case after a reboot where DNS
+        # came back but wg0 never recovered on its own.
+        if [ "$connection_state" = "DISCONNECTED" ]; then
+            log_warning "Peer IP unchanged but wg0 is DISCONNECTED, force restart"
+            if restart_wg0; then
+                current_ip=$(get_current_peer_ip)
+                log_status "SUCCESS" "wg0 recovered after forced restart (IP unchanged)"
+            else
+                log_error "forced restart did not recover wg0"
+            fi
+        else
+            log_debug "Peer IP unchanged, nothing to do"
+        fi
     fi
     
     return 0
@@ -619,7 +634,7 @@ EOF
 }
 
 show_version() {
-    echo "wg0 interface manager v2.6 (POSIX-compatible)"
+    echo "wg0 interface manager v2.7 (POSIX-compatible)"
 }
 
 # ============================================================================

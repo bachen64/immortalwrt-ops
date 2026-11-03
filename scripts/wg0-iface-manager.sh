@@ -1,6 +1,6 @@
 #!/bin/sh
 # ============================================================================
-# wg0 接口管理器 v2.6 (POSIX兼容版)
+# wg0 接口管理器 v2.7 (POSIX兼容版)
 # 每5分钟检测wg0对端DDNS的变化，动态管理WG接口
 # 当检测到wg0连接到本地地址，尝试修复
 # v2.5: cron巡检静默运行，仅在事件发生时记录日志（IP变化/重启/警告/错误）；
@@ -8,6 +8,8 @@
 # v2.6: 修复DNS解析——真实查询失败时曾把dnsmasq自身的127.0.0.1:53 server行
 #        误当答案，导致误判"IP变化"并反复重启wg0（JM1 2026-11-03事故）。
 #        现在只接受"Name:"行之后的地址；本地/可疑答案按解析失败处理并跳过本轮。
+# v2.7: 对端IP未变但wg0自身DISCONNECTED时（如重启后endpoint卡在0.0.0.0），
+#        强制重启wg0以恢复连接。
 # ============================================================================
 
 # ============================================================================
@@ -498,7 +500,19 @@ monitor_ddns() {
     elif [ "$domain_ip" != "$last_ip" ]; then
         handle_ip_change "$last_ip" "$domain_ip"
     else
-        log_debug "$WG_INTERFACE对端IP未变化，无需操作"
+        # 对端IP未变：仅在wg0自身掉线时才动作。
+        # 覆盖重启后endpoint卡在0.0.0.0/空地址、DNS已恢复但wg0自己没起来的场景。
+        if [ "$connection_state" = "DISCONNECTED" ]; then
+            log_warning "对端IP未变但$WG_INTERFACE处于DISCONNECTED，强制重启$WG_INTERFACE"
+            if restart_wg0; then
+                current_ip=$(get_current_peer_ip)
+                log_status "SUCCESS" "$WG_INTERFACE已通过强制重启恢复（IP未变）"
+            else
+                log_error "强制重启未能恢复$WG_INTERFACE"
+            fi
+        else
+            log_debug "$WG_INTERFACE对端IP未变化，无需操作"
+        fi
     fi
     
     return 0
@@ -617,7 +631,7 @@ EOF
 }
 
 show_version() {
-    echo "wg0 接口管理器 v2.6 (POSIX兼容版)"
+    echo "wg0 接口管理器 v2.7 (POSIX兼容版)"
 }
 
 # ============================================================================
