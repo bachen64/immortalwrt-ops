@@ -1,16 +1,16 @@
 #!/bin/sh
 # ============================================================================
-# wg0 interface manager v2.7 (POSIX-compatible)
+# wg0 interface manager v2.8 (POSIX-compatible)
 # Run every 5 min: detect DDNS change of wg0 peer, manage WG interface
 # If wg0 connects to a local address, try to fix it
 # v2.5: cron runs are silent; only events (IP change, restart, warnings,
 #        errors) are logged. Use --check for full verbose diagnostics.
 # v2.6: fix DNS parsing that picked dnsmasq's own 127.0.0.1:53 server line as
 #        the answer when the real query failed -> false "IP changed" loops.
-#        Now only the Address line after "Name:" is accepted; local/bogus
-#        results are treated as resolve failure and skip the run.
 # v2.7: if peer IP is unchanged but wg0 itself is DISCONNECTED (e.g. endpoint
 #        stuck at 0.0.0.0 after a reboot), force-restart wg0 to recover.
+# v2.8: treat 198.18.0.0/16 (OpenClash fake-ip range) as a local/bogus answer;
+#        a hub-side fake-ip must never be acted on as a real peer IP.
 # ============================================================================
 
 # ============================================================================
@@ -224,7 +224,7 @@ is_local_address() {
     # Check IPv4 local addresses
     case "$ip" in
         127.*|localhost) return 0 ;;
-        10.*|172.16.*|172.17.*|172.18.*|172.19.*|172.20.*|172.21.*|172.22.*|172.23.*|172.24.*|172.25.*|172.26.*|172.27.*|172.28.*|172.29.*|172.30.*|172.31.*|192.168.*) return 0 ;;
+        10.*|172.16.*|172.17.*|172.18.*|172.19.*|172.20.*|172.21.*|172.22.*|172.23.*|172.24.*|172.25.*|172.26.*|172.27.*|172.28.*|172.29.*|172.30.*|172.31.*|192.168.*|198.18.*) return 0 ;;
     esac
     
     # Check IPv6 local addresses
@@ -634,7 +634,7 @@ EOF
 }
 
 show_version() {
-    echo "wg0 interface manager v2.7 (POSIX-compatible)"
+    echo "wg0 interface manager v2.8 (POSIX-compatible)"
 }
 
 # ============================================================================
