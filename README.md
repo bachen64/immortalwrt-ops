@@ -26,7 +26,7 @@ Copy (or clone) the `immortalwrt-ops` folder into your agent's skill directory, 
 └── scripts/
     ├── pbr.user.chnroute     # deploy to router: /usr/share/pbr/pbr.user.chnroute
     ├── check-route.sh        # read-only health check, run on router
-    └── wg0-iface-manager.sh  # wg0 DDNS self-heal v2.9 — deploy to /usr/bin/ + cron */5
+    └── wg0-iface-manager.sh  # wg0 DDNS self-heal v2.9 — deploy to /usr/bin/ + cron */5; set DDNS_DOMAIN first
 ```
 
 > This repo also ships `scripts/wg0-iface-manager-en.sh` (mirror of the active

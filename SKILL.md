@@ -78,7 +78,7 @@ sysupgrade -r /tmp/backup-XXX.tar.gz               # 恢复
 | `references/troubleshooting.md` | 排障命令速查 + 已知坑清单 | 任何排障场景 |
 | `scripts/pbr.user.chnroute` | 设备端 chnroute 灌入脚本（英文注释，支持 --force） | 部署到设备 `/usr/share/pbr/` |
 | `scripts/check-route.sh` | 设备端分流健康检查（read-only） | 日常巡检 / 验证 |
-| `scripts/wg0-iface-manager.sh` | 设备端 wg0 DDNS 自愈脚本（对端 IP 变化自动重解析；endpoint 被污染成 127.0.0.1/local 时先用 `wg set ... endpoint` 原地修正，失败才 down/up；英文注释 v2.9，cron 巡检静默、仅事件写日志） | 部署到 `/usr/bin/wg0-iface-manager.sh` + cron `*/5 * * * *`，**换 PBR 时勿删** |
+| `scripts/wg0-iface-manager.sh` | 设备端 wg0 DDNS 自愈脚本（对端 IP 变化自动重解析；endpoint 被污染成 127.0.0.1/local 时先用 `wg set ... endpoint` 原地修正，失败才 down/up；英文注释 v2.9，cron 巡检静默、仅事件写日志） | 部署到 `/usr/bin/wg0-iface-manager.sh` + cron `*/5 * * * *`，**换 PBR 时勿删**；**部署前先把 `DDNS_DOMAIN` 改成自己的端点域名**（仓库版为 `CHANGE-ME.dynv6.net` 占位） |
 
 > English versions of all references (for non-Chinese readers): `references/pbr-chnroute-en.md`, `references/failover-architecture-en.md`, `references/troubleshooting-en.md`.
 

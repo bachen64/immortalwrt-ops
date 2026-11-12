@@ -28,6 +28,7 @@ ip route get "$CN" | head -1
 echo "== Route to global ($GLOBAL) =="
 ip route get "$GLOBAL" | head -1
 echo "== Peer reachability =="
+# Replace 192.168.x.x with your own hub / peer gateway before deploying.
 for HOST in 10.0.0.1 192.168.x.x; do
     if ping -c 1 -W 1 "$HOST" >/dev/null 2>&1; then
         echo "  $HOST OK"

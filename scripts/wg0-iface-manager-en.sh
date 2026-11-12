@@ -20,6 +20,9 @@
 # ============================================================================
 # Config parameters
 # ============================================================================
+# Placeholder for the public repo: set this to your own DDNS endpoint
+# hostname (dynv6 / Cloudflare / etc.) before deploying, otherwise the
+# script can never resolve the peer.
 DDNS_DOMAIN="CHANGE-ME.dynv6.net"
 WG_INTERFACE="wg0"
 IP_FILE="/var/run/office_last_ip.txt"
