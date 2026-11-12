@@ -31,6 +31,8 @@ nslookup CHANGE-ME.dynv6.net 8.8.8.8                        # endpoint 解析（
 | 对端 ping 不通，报 "Required key not available" | peer `allowed_ips` 缺目标网段（WireGuard 按 allowed_ips 过滤数据面） | `wg set wg0 peer <pub> allowed-ips <ip> <net>` 补网段；UCI 持久化注意：`config wireguard_<if>` 是**匿名 section**，须用 `uci add_list network.@wireguard_<if>[0].allowed_ips=...`（按名字 `network.wireguard_wg0` 会报 Entry not found / Invalid argument） |
 | 每晚固定掉线（IPv6 残留场景） | 设备上残留的 IPv6/RA 配置改动（如装过 iStoreAPP 插件后删除未还原） | 对比备份 diff `/etc/config/dhcp`、`network`，还原残留项 |
 | 重启后不握手 | OpenClash 启动顺序/缓存；endpoint 用动态域名且 DNS 解析错误 | logread 查时序；试 `nslookup` 手动解析后临时换 IP endpoint |
+| endpoint = `127.0.0.1`，每天数次自愈重启（每次约 19 秒） | **本地上游对 dynv6.net 全域 A 记录做 wildcard 黑洞**：光猫 `192.168.x.x` 与 `fe80::1` 对 `CHANGE-ME.dynv6.net`、父域 `dynv6.net`、甚至不存在的 `zzz.dynv6.net` 的 A 查询一律返回 `127.0.0.1`，AAAA 正常；dynv6 权威本身对 A 是 **NODATA**。WG 重连时若只用 A 解析就把 endpoint 设成 127.0.0.1（JM1 2026-11-10~12 实测，每天约 3 次） | 判据：`nslookup -type=A <域名> <上游IP>` 与 `nslookup -type=A 不存在的子域 <上游IP>` 都返回 127.0.0.1 = 黑洞；对照干净上游应返回空/NXDOMAIN。**v2.9 脚本**用 `wg set wg0 peer <key> endpoint [<正确IP>]:<端口>` 原地修正（约 6 秒，不再重启接口）；彻底解法是让该域名只走干净上游（注意 wg0 依赖时慎用，会引入解析死锁） |
+| 同上但注入验证时 endpoint 自己变回正确地址 | **WireGuard endpoint roaming**：peer 收到来自真实地址的有效加密包后会自动改写 endpoint，注入测试因此无法复现（JM1 实测 1 秒内自动恢复） | 验证 v2.9 的原地修正要用 mock `wg` 隔离测试（截取脚本 1..`main "$@"` 前一行 source，PATH 前置假 wg），不要靠真实注入 |
 | 对端（hub）PPPoE 重拨换 IPv6 前缀后，spoke 握手停在重拨时刻不恢复 | **换 PBR 时误删了 wg0-iface-manager cron job**（每 5 分钟检测对端 DDNS 变化，变了就 down/up wg0 重解析；WireGuard endpoint 域名只在接口启动时解析一次，接口不重启永远连旧地址） | 从备份恢复 `/usr/bin/wg0-iface-manager.sh` + cron `*/5 * * * *`（脚本见 `scripts/wg0-iface-manager.sh`，OneDrive `Attachments\backup\{Buero,JM1}` 有原版）；立即 `ifup wg0` 恢复当前断线 |
 
 ### PBR 分流异常

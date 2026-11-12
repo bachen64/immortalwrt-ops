@@ -1,6 +1,6 @@
 #!/bin/sh
 # ============================================================================
-# wg0 interface manager v2.8 (POSIX-compatible)
+# wg0 interface manager v2.9 (POSIX-compatible)
 # Run every 5 min: detect DDNS change of wg0 peer, manage WG interface
 # If wg0 connects to a local address, try to fix it
 # v2.5: cron runs are silent; only events (IP change, restart, warnings,
@@ -11,6 +11,10 @@
 #        stuck at 0.0.0.0 after a reboot), force-restart wg0 to recover.
 # v2.8: treat 198.18.0.0/16 (OpenClash fake-ip range) as a local/bogus answer;
 #        a hub-side fake-ip must never be acted on as a real peer IP.
+# v2.9: fix a bad endpoint in place with "wg set ... endpoint" before falling
+#        back to a full ifdown/ifup. A DNS-poisoned local reply (127.0.0.1) is
+#        cured in ~6s instead of a 19s interface restart, and a restart that
+#        cannot re-resolve the domain no longer leaves the tunnel down.
 # ============================================================================
 
 # ============================================================================
@@ -36,6 +40,8 @@ RETRY_MAX_DELAY=30
 # wg0 specific parameters
 WG_RESTART_DELAY=3
 NETWORK_STABILIZE_DELAY=5
+# Seconds to wait for a handshake after an in-place "wg set ... endpoint".
+WG_FASTFIX_WAIT=6
 
 # Log level control
 LOG_LEVEL="INFO"
@@ -329,6 +335,79 @@ check_wg_interface_health() {
 # ============================================================================
 # wg0 management functions
 # ============================================================================
+# Read the UDP port currently configured on the peer endpoint.
+get_endpoint_port() {
+    wg show "$WG_INTERFACE" 2>/dev/null \
+        | grep "^[[:space:]]*endpoint:" \
+        | awk -F: '{print $NF}' \
+        | tr -d ' ' \
+        | head -1
+}
+
+# Render an address:port pair, bracketing IPv6 literals.
+format_endpoint() {
+    case "$1" in
+        *:*) echo "[$1]:$2" ;;
+        *)   echo "$1:$2" ;;
+    esac
+}
+
+# v2.9: repoint the peer endpoint in place instead of tearing the interface
+# down. A poisoned DNS answer (127.0.0.1) is replaced with the freshly
+# resolved address, the tunnel is poked so WireGuard re-handshakes at once,
+# and only a real handshake counts as success.
+fast_fix_endpoint() {
+    fast_ip=$(resolve_domain_ip "$DDNS_DOMAIN")
+    if [ -z "$fast_ip" ]; then
+        log_debug "Fast fix skipped: cannot resolve $DDNS_DOMAIN"
+        return 1
+    fi
+    if is_local_address "$fast_ip"; then
+        log_debug "Fast fix skipped: resolved address is local ($fast_ip)"
+        return 1
+    fi
+
+    peer_key=$(wg show "$WG_INTERFACE" peers 2>/dev/null | head -1)
+    if [ -z "$peer_key" ]; then
+        log_debug "Fast fix skipped: cannot read peer key"
+        return 1
+    fi
+
+    port=$(get_endpoint_port)
+    [ -z "$port" ] && port=51820
+
+    endpoint=$(format_endpoint "$fast_ip" "$port")
+    log_status "INFO" "Fast fix: repoint endpoint to $endpoint (no interface restart)"
+
+    if ! wg set "$WG_INTERFACE" peer "$peer_key" endpoint "$endpoint" 2>/dev/null; then
+        log_warning "Fast fix: wg set failed, falling back to restart"
+        return 1
+    fi
+
+    # Generate one packet through the tunnel so a handshake starts immediately.
+    ping -c 1 -W 3 1.1.1.1 >/dev/null 2>&1
+    sleep "$WG_FASTFIX_WAIT"
+
+    handshake=$(wg show "$WG_INTERFACE" latest-handshakes 2>/dev/null | awk '{print $2}' | head -1)
+    case "$handshake" in
+        ''|*[!0-9]*) handshake="" ;;
+    esac
+
+    if [ -n "$handshake" ] && [ "$handshake" -gt 0 ]; then
+        now=$(date +%s)
+        age=$((now - handshake))
+        if [ "$age" -le 90 ]; then
+            log_status "SUCCESS" "Fast fix recovered the tunnel (handshake ${age}s ago)"
+            return 0
+        fi
+        log_warning "Fast fix: endpoint set but handshake is stale (${age}s)"
+    else
+        log_warning "Fast fix: endpoint set but no handshake recorded"
+    fi
+
+    return 1
+}
+
 restart_wg0() {
     attempt=1
     max_attempts=2
@@ -415,6 +494,13 @@ fix_local_connection() {
     current_ip=$(get_current_peer_ip)
     log_debug "Current bad state: connected to $current_ip"
     
+    # v2.9: an in-place endpoint fix costs ~6s and touches nothing else.
+    if fast_fix_endpoint; then
+        log_status "SUCCESS" "local-connection issue fixed (in-place)"
+        return 0
+    fi
+    
+    log_status "INFO" "In-place fix did not work, falling back to interface restart"
     if restart_wg0; then
         log_status "SUCCESS" "local-connection issue fixed"
         return 0
@@ -507,7 +593,11 @@ monitor_ddns() {
         # came back but wg0 never recovered on its own.
         if [ "$connection_state" = "DISCONNECTED" ]; then
             log_warning "Peer IP unchanged but wg0 is DISCONNECTED, force restart"
-            if restart_wg0; then
+            # v2.9: repoint the endpoint first; a full restart can fail when the
+            # interface comes back before DNS is usable again.
+            if fast_fix_endpoint; then
+                log_status "SUCCESS" "wg0 recovered via in-place endpoint fix (IP unchanged)"
+            elif restart_wg0; then
                 current_ip=$(get_current_peer_ip)
                 log_status "SUCCESS" "wg0 recovered after forced restart (IP unchanged)"
             else
@@ -634,7 +724,7 @@ EOF
 }
 
 show_version() {
-    echo "wg0 interface manager v2.8 (POSIX-compatible)"
+    echo "wg0 interface manager v2.9 (POSIX-compatible)"
 }
 
 # ============================================================================

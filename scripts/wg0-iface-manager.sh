@@ -1,6 +1,6 @@
 #!/bin/sh
 # ============================================================================
-# wg0 接口管理器 v2.8 (POSIX兼容版)
+# wg0 接口管理器 v2.9 (POSIX兼容版)
 # 每5分钟检测wg0对端DDNS的变化，动态管理WG接口
 # 当检测到wg0连接到本地地址，尝试修复
 # v2.5: cron巡检静默运行，仅在事件发生时记录日志（IP变化/重启/警告/错误）；
@@ -12,6 +12,9 @@
 #        强制重启wg0以恢复连接。
 # v2.8: 将198.18.0.0/16（OpenClash fake-ip段）视为本地/可疑答案拒绝；
 #        hub侧fake-ip绝不能被当作真实对端IP处理。
+# v2.9: 先用 "wg set ... endpoint" 原地修正错误endpoint，再考虑完整
+#        ifdown/ifup 回退。DNS被本地劫持返回127.0.0.1时约6秒即可治愈，
+#        而不是19秒的接口重启；且重启后无法重新解析域名时也不会把隧道留在断开状态。
 # ============================================================================
 
 # ============================================================================
@@ -37,6 +40,8 @@ RETRY_MAX_DELAY=30
 # wg0 特定参数
 WG_RESTART_DELAY=3
 NETWORK_STABILIZE_DELAY=5
+# 原地修正endpoint后等待握手的最长秒数
+WG_FASTFIX_WAIT=6
 
 # 日志级别控制
 LOG_LEVEL="INFO"
@@ -329,6 +334,78 @@ check_wg_interface_health() {
 # ============================================================================
 # wg0 管理功能
 # ============================================================================
+# 读取当前对端endpoint使用的UDP端口
+get_endpoint_port() {
+    wg show "$WG_INTERFACE" 2>/dev/null \
+        | grep "^[[:space:]]*endpoint:" \
+        | awk -F: '{print $NF}' \
+        | tr -d ' ' \
+        | head -1
+}
+
+# 拼接 address:port，IPv6字面地址加方括号
+format_endpoint() {
+    case "$1" in
+        *:*) echo "[$1]:$2" ;;
+        *)   echo "$1:$2" ;;
+    esac
+}
+
+# v2.9: 原地重新指向对端endpoint，不拆接口。
+# 被污染的DNS答案（127.0.0.1）用刚解析出的地址替换，主动发一个包促发WireGuard
+# 立即重新握手；只有真正握手成功才算修复成功。
+fast_fix_endpoint() {
+    fast_ip=$(resolve_domain_ip "$DDNS_DOMAIN")
+    if [ -z "$fast_ip" ]; then
+        log_debug "快速修复跳过：无法解析 $DDNS_DOMAIN"
+        return 1
+    fi
+    if is_local_address "$fast_ip"; then
+        log_debug "快速修复跳过：解析结果是本地地址（$fast_ip）"
+        return 1
+    fi
+
+    peer_key=$(wg show "$WG_INTERFACE" peers 2>/dev/null | head -1)
+    if [ -z "$peer_key" ]; then
+        log_debug "快速修复跳过：读不到peer公钥"
+        return 1
+    fi
+
+    port=$(get_endpoint_port)
+    [ -z "$port" ] && port=51820
+
+    endpoint=$(format_endpoint "$fast_ip" "$port")
+    log_status "INFO" "快速修复：将endpoint重新指向 $endpoint（不重启接口）"
+
+    if ! wg set "$WG_INTERFACE" peer "$peer_key" endpoint "$endpoint" 2>/dev/null; then
+        log_warning "快速修复：wg set 失败，回退到重启接口"
+        return 1
+    fi
+
+    # 生成一个穿过隧道的包，让握手立即开始
+    ping -c 1 -W 3 1.1.1.1 >/dev/null 2>&1
+    sleep "$WG_FASTFIX_WAIT"
+
+    handshake=$(wg show "$WG_INTERFACE" latest-handshakes 2>/dev/null | awk '{print $2}' | head -1)
+    case "$handshake" in
+        ''|*[!0-9]*) handshake="" ;;
+    esac
+
+    if [ -n "$handshake" ] && [ "$handshake" -gt 0 ]; then
+        now=$(date +%s)
+        age=$((now - handshake))
+        if [ "$age" -le 90 ]; then
+            log_status "SUCCESS" "快速修复已恢复隧道（握手在 ${age} 秒前）"
+            return 0
+        fi
+        log_warning "快速修复：endpoint已设置但握手仍是旧的（${age} 秒）"
+    else
+        log_warning "快速修复：endpoint已设置但没有握手记录"
+    fi
+
+    return 1
+}
+
 restart_wg0() {
     attempt=1
     max_attempts=2
@@ -415,6 +492,13 @@ fix_local_connection() {
     current_ip=$(get_current_peer_ip)
     log_debug "当前错误状态: 连接到 $current_ip"
     
+    # v2.9: 原地修正endpoint约6秒，且不动接口其他状态
+    if fast_fix_endpoint; then
+        log_status "SUCCESS" "$WG_INTERFACE本地连接问题修复成功（原地修正）"
+        return 0
+    fi
+    
+    log_status "INFO" "原地修正未生效，回退到重启接口"
     if restart_wg0; then
         log_status "SUCCESS" "$WG_INTERFACE本地连接问题修复成功"
         return 0
@@ -506,7 +590,10 @@ monitor_ddns() {
         # 覆盖重启后endpoint卡在0.0.0.0/空地址、DNS已恢复但wg0自己没起来的场景。
         if [ "$connection_state" = "DISCONNECTED" ]; then
             log_warning "对端IP未变但$WG_INTERFACE处于DISCONNECTED，强制重启$WG_INTERFACE"
-            if restart_wg0; then
+            # v2.9: 先原地重指endpoint；接口重启后DNS可能仍不可用，重启会白失败
+            if fast_fix_endpoint; then
+                log_status "SUCCESS" "$WG_INTERFACE已通过原地修正endpoint恢复（IP未变）"
+            elif restart_wg0; then
                 current_ip=$(get_current_peer_ip)
                 log_status "SUCCESS" "$WG_INTERFACE已通过强制重启恢复（IP未变）"
             else
@@ -633,7 +720,7 @@ EOF
 }
 
 show_version() {
-    echo "wg0 接口管理器 v2.8 (POSIX兼容版)"
+    echo "wg0 接口管理器 v2.9 (POSIX兼容版)"
 }
 
 # ============================================================================
